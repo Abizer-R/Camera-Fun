@@ -18,8 +18,10 @@ import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.video.AudioConfig
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,19 +36,28 @@ import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.camerafunapp.ui.cameraScreen.CameraPreview
-import com.example.camerafunapp.ui.cameraScreen.MainViewModel
-import com.example.camerafunapp.ui.cameraScreen.PhotoBottomSheetContent
+import com.example.camerafunapp.data.TfLiteLandmarkClassifier
+import com.example.camerafunapp.domain.Classification
+import com.example.camerafunapp.presentation.LandmarkImageAnalyser
+import com.example.camerafunapp.presentation.cameraScreen.CameraPreview
+import com.example.camerafunapp.presentation.cameraScreen.MainViewModel
+import com.example.camerafunapp.presentation.cameraScreen.PhotoBottomSheetContent
 import com.example.camerafunapp.ui.theme.CameraFunAppTheme
 import com.example.camerafunapp.util.PermissionUtils
 import kotlinx.coroutines.launch
@@ -67,181 +78,55 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             CameraFunAppTheme {
-                val scope = rememberCoroutineScope()
-                val scaffoldState = rememberBottomSheetScaffoldState()
+                var classifications by remember {
+                    mutableStateOf(emptyList<Classification>())
+                }
+                val analyzer = remember {
+                    LandmarkImageAnalyser(
+                        classifier = TfLiteLandmarkClassifier(this)
+                    ) {
+                        classifications = it
+                    }
+                }
                 val controller = remember {
                     LifecycleCameraController(this).apply {
-                        setEnabledUseCases(
-                            CameraController.IMAGE_CAPTURE or
-                                    CameraController.VIDEO_CAPTURE
+                        setEnabledUseCases(CameraController.IMAGE_ANALYSIS)
+                        setImageAnalysisAnalyzer(
+                            ContextCompat.getMainExecutor(this@MainActivity),
+                            analyzer
                         )
                     }
                 }
+                Box(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    CameraPreview(
+                        mController = controller,
+                        modifier = Modifier.fillMaxSize()
+                    )
 
-                val viewModel = viewModel<MainViewModel>()
-                val bitmaps by viewModel.bitmaps.collectAsState()
-
-                BottomSheetScaffold(
-                    scaffoldState = scaffoldState,
-                    sheetPeekHeight = 0.dp,
-                    sheetContent = {
-                        PhotoBottomSheetContent(
-                            bitmaps = bitmaps,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                ) { paddingVal ->
-                    Box(
+                    Column(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(paddingVal)
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
                     ) {
-                        CameraPreview(
-                            mController = controller,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                        
-                        IconButton(
-                            onClick = {
-                                controller.cameraSelector =
-                                    if (controller.cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
-                                        CameraSelector.DEFAULT_FRONT_CAMERA
-                                    } else CameraSelector.DEFAULT_BACK_CAMERA
-                            },
-                            modifier = Modifier.offset(16.dp, 16.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Cameraswitch,
-                                contentDescription = "Switch Camera"
+                        classifications.forEach {
+                            Text(
+                                text = it.name,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.primaryContainer)
+                                    .padding(16.dp),
+                                textAlign = TextAlign.Center,
+                                fontSize = 20.sp,
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .align(Alignment.BottomCenter)
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    scope.launch {
-                                        scaffoldState.bottomSheetState.expand()
-                                    }
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Photo,
-                                    contentDescription = "Open Gallery"
-                                )
-                            }
-
-                            IconButton(
-                                onClick = {
-                                    takePhoto(
-                                        controller = controller,
-                                        onPhotoTaken = viewModel::onTakePhoto
-                                    )
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PhotoCamera,
-                                    contentDescription = "Take Photo"
-                                )
-                            }
-
-
-                            IconButton(
-                                onClick = {
-                                    recordVideo(
-                                        controller = controller
-                                    )
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Videocam,
-                                    contentDescription = "Record Video"
-                                )
-                            }
-
-                        }
                     }
                 }
+
             }
         }
     }
 
-    private fun takePhoto(
-        controller: LifecycleCameraController,
-        onPhotoTaken: (Bitmap) -> Unit
-    ) {
-        if (PermissionUtils.hasCameraPermissions(this).not()) {
-            return
-        }
-        controller.takePicture(
-            ContextCompat.getMainExecutor(this),
-            object : OnImageCapturedCallback() {
-                override fun onCaptureSuccess(image: ImageProxy) {
-                    super.onCaptureSuccess(image)
-
-                    val matrix = Matrix().apply {
-                        postRotate(image.imageInfo.rotationDegrees.toFloat())
-                        if (controller.cameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA) {
-                            // revert the photo mirroring of front camera
-                            postScale(-1f, 1f)
-                        }
-                    }
-                    val rotatedBitmap = Bitmap.createBitmap(
-                        image.toBitmap(),
-                        0,
-                        0,
-                        image.width,
-                        image.height,
-                        matrix,
-                        true
-                    )
-                    onPhotoTaken(rotatedBitmap)
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    super.onError(exception)
-                    Log.e("Camera", "Couldn't take photo: ", exception)
-                }
-            }
-        )
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun recordVideo(
-        controller: LifecycleCameraController
-    ) {
-        if (PermissionUtils.hasCameraPermissions(this).not()) {
-            return
-        }
-
-        if (recording != null) {
-            recording?.stop()
-            recording = null
-            return
-        }
-
-        val outputFile = File(filesDir, "my-recording.mp4")
-        recording = controller.startRecording(
-            FileOutputOptions.Builder(outputFile).build(),
-            AudioConfig.create(true),
-            ContextCompat.getMainExecutor(this)
-        ) { videoRecordEvent ->
-            when (videoRecordEvent) {
-                is VideoRecordEvent.Finalize -> {
-                    if (videoRecordEvent.hasError()) {
-                        recording?.close()
-                        recording = null
-                        Toast.makeText(this, "Video capture failed", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(this, "Video capture succeeded", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        }
-    }
 }
